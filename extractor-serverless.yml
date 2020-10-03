@@ -1,0 +1,118 @@
+service: extractor
+plugins:
+  - serverless-python-requirements
+
+custom:
+  bucket_name: crawlerextractor
+  stage: dev
+  s3_arn:
+    Fn::GetAtt:
+      - S3Bucket
+      - Arn
+  google_queue_name: ${cf:google-crawler-dev.googleurlqueue}
+  google_queue_arn: ${cf:google-crawler-dev.urlqueuearn}
+  archives_queue_name: ${cf:archives-crawler-dev.archivesqueue}
+  archives_queue_arn: ${cf:archives-crawler-dev.queuearn}
+  realTime_queue_name: ${cf:realTime-crawler-dev.realTimequeue}
+  realTime_queue_arn: ${cf:realTime-crawler-dev.queuearn}
+  subnet_id: ${cf:aurora-development.subnetidb}
+  sg_id: ${cf:aurora-development.VpcSecurityGroupIds}
+  cluster_arn: "arn:aws:rds:ap-south-1:013583992408:cluster:aurora-development-aurorardscluster-1639ttg3acqva"
+  secret_arn: "arn:aws:secretsmanager:ap-south-1:013583992408:secret:AuroraDbSecret-qoq5oN"
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: dev
+  region: ap-south-1
+  # vpc:
+  #   securityGroupIds:
+  #     - ${self:custom.sg_id}
+  #   subnetIds:
+  #     - ${self:custom.subnet_id}
+  environment:
+    bucketName: ${self:custom.bucket_name}
+    googleQueueName: ${self:custom.google_queue_name}
+    archivesQueueName: ${self:custom.archives_queue_name}
+    realTimeQueueName: ${self:custom.realTime_queue_name}
+    cluster_arn: ${self:custom.cluster_arn}
+    secret_arn: ${self:custom.secret_arn}
+    AURORA_DB_NAME: ${cf:aurora-development.database}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - "s3:*"
+      Resource: { "Fn::Join": ["", ["${self:custom.s3_arn}", "/*"]] }
+
+    - Effect: Allow
+      Action:
+        - sqs:DeleteMessage
+        - sqs:GetQueueUrl
+
+      Resource: ${self:custom.google_queue_arn}
+
+    - Effect: Allow
+      Action:
+        - sqs:DeleteMessage
+        - sqs:GetQueueUrl
+
+      Resource: ${self:custom.archives_queue_arn}
+
+    - Effect: Allow
+      Action:
+        - sqs:DeleteMessage
+        - sqs:GetQueueUrl
+
+      Resource: ${self:custom.realTime_queue_arn}
+    - Effect: Allow
+      Action:
+        - rds-data:ExecuteStatement
+      Resource: ${self:custom.cluster_arn}
+    - Effect: Allow
+      Action:
+        - secretsmanager:GetSecretValue
+      Resource: ${self:custom.secret_arn}
+
+functions:
+  gethtml:
+    handler: crawler.get_html
+    memorySize: 128
+    events:
+      - sqs:
+          arn: ${self:custom.google_queue_arn}
+          batchSize: 1
+      - sqs:
+          arn: ${self:custom.archives_queue_arn}
+          batchSize: 10
+      - sqs:
+          arn: ${self:custom.realTime_queue_arn}
+          batchSize: 1
+    timeout: 900
+  extract:
+    handler: extractor.extract_information
+    memorySize: 128
+    timeout: 900
+    events:
+      - sns:
+          arn: arn:aws:sns:ap-south-1:013583992408:crawlerextractor-html_files-json
+    # events:
+    #   - s3:
+    #       bucket: ${self:custom.bucket_name}
+    #       event: s3:ObjectCreated:*
+    #       rules:
+    #         - prefix: html_files/
+    #         - suffix: .json
+    #       existing: true
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+
+resources:
+  Resources:
+    S3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: Private
+        BucketName: ${self:custom.bucket_name}
