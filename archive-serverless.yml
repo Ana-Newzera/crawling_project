@@ -1,0 +1,68 @@
+service: archives-crawler
+
+custom:
+  queuename: ArchivesQueue
+  s3_arn: arn:aws:s3:::crawlerextractor
+  stage: dev
+  start_queue_arn: ${cf:archives-start-point-dev.queuearn1}
+
+plugins:
+  - serverless-python-requirements
+provider:
+  name: aws
+  runtime: python3.6
+  stage: dev
+  region: ap-south-1
+  environment:
+    queueName: ${self:custom.queuename}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - sqs:SendMessage
+        - sqs:GetQueueUrl
+      Resource: !GetAtt ArchivesSQS.Arn
+    - Effect: Allow
+      Action:
+        - sqs:DeleteMessage
+        - sqs:GetQueueUrl
+      Resource: ${self:custom.start_queue_arn}
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:DeleteObject
+      Resource: { "Fn::Join": ["", ["${self:custom.s3_arn}", "/*"]] }
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+
+functions:
+  sendUrls:
+    handler: handler.lambda_handler
+    memorySize: 256
+    events:
+      - sqs:
+          arn: ${self:custom.start_queue_arn}
+          batchSize: 1
+    timeout: 900
+
+resources:
+  Resources:
+    ArchivesSQS:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.queuename}
+        VisibilityTimeout: 900
+  Outputs:
+    queuearn:
+      Value:
+        Fn::GetAtt:
+          - ArchivesSQS
+          - Arn
+      Export:
+        Name: archives
+    archivesqueue:
+      Value: ${self:custom.queuename}
+      Export:
+        Name: archivesqueue
